@@ -14,6 +14,8 @@ engine.name = 'PolyPerc'
 
 
 local devicepos = 1
+local device_name = ""
+local device_name_display = ""
 local mdevs = {}
 local midi_device
 local msg = {}
@@ -29,6 +31,7 @@ local blinkers = {false}
 local mute = true
 
 local midi_buffer = {}
+local midi_buffer_display = {}
 local midi_buffer_len = 256
 local buff_start = 1
 
@@ -42,6 +45,95 @@ local col4 = col3 + 18
 local col5 = col4 + 44
 local col6 = 128
 
+-- scrolling labels setup
+local scr_tempo = 90
+local scr_step = 1
+local scr_step_increment = 1
+local scr_max_length_device_name = 24 -- reduce value to force scrolling of device names
+local scr_max_length_col4 = 9 -- reduce value to force scrolling of midi type values
+local scr_step_metro
+
+
+-- utilities 
+function copy(obj)
+    if type(obj) ~= 'table' then return obj end
+    local res = {}
+    for k, v in pairs(obj) do res[copy(k)] = copy(v) end
+    return res
+end
+
+function truncate(str, trunc_len, with_ellipses)
+  if (str ~= nil) then
+    if (with_ellipses and #str > trunc_len) then
+      trunc_str = string.sub(str, 0, trunc_len-1) .. "..."
+    else 
+      trunc_str = string.sub(str, 0, trunc_len)
+    end
+    return trunc_str
+  end
+end
+
+-- scroll the device name and midi type
+-- scrolling occurs based on the length of the fields as set by the two variables:
+--    scr_max_length_device_name
+--    scr_max_length_col4
+local function scroll_text()
+  scr_step = scr_step + scr_step_increment
+
+  --scroll device name
+  scr_text = ""
+  scr_current_cut = ""
+  scr_head = ""
+  scr_tail = ""
+  scr_text = ""
+
+  if (devicepos and mdevs[devicepos]) then
+    device_name_display = devicepos .. ": ".. mdevs[devicepos]
+    if (#device_name_display > scr_max_length_device_name) then
+      scr_text = device_name_display
+      scr_current_cut = (scr_step) % #scr_text + 1
+      -- print(scr_current_cut)
+      scr_head = string.sub(scr_text,0, scr_current_cut)
+      scr_tail = string.sub(scr_text,scr_current_cut, #scr_text)
+      scr_text = scr_tail .. "  " .. scr_head
+      device_name_display = scr_text
+    end 
+    redraw()
+  end
+  
+  --scroll text at top of midi_buffer list
+  scr_text = ""
+  scr_current_cut = ""
+  scr_head = ""
+  scr_tail = ""
+  scr_text = ""
+  if (midi_buffer[buff_start][4]) then
+    if (#midi_buffer[buff_start][4] > scr_max_length_col4) then
+      scr_text = midi_buffer[buff_start][4] and midi_buffer[buff_start][4] or ""
+      scr_current_cut = (scr_step) % #scr_text + 1
+      -- print(scr_current_cut)
+      scr_head = string.sub(scr_text,0, scr_current_cut)
+      scr_tail = string.sub(scr_text,scr_current_cut, #scr_text)
+      scr_text = scr_tail .. "  " .. scr_head
+      midi_buffer_display[buff_start][4] = string.sub(scr_text,0,scr_max_length)
+      -- print(midi_buffer_display[buff_start][4])
+      -- print("scroll: ".. scr_tail .." / " .. scr_head)
+    else
+      midi_buffer_display[buff_start][4] = midi_buffer[buff_start][4]
+    end
+    redraw()
+ end
+end
+
+local function scr_start_stop_metro()
+  if scr_step_metro.is_running then
+    scr_step_metro:stop()
+  else
+    scr_step = 0
+    scr_step_metro:start(60 / scr_tempo / 4) --  16ths
+  end
+end
+  
 -- 
 
 function blink_generator(x)
@@ -104,6 +196,11 @@ function init()
   screen.level(15)
   screen.aa(0)
   screen.line_width(1)
+
+  --startup scrolling metro
+  scr_step_metro = metro.init()
+  scr_step_metro.event = scroll_text
+  scr_start_stop_metro()
 
 end
 -- END INIT
@@ -183,7 +280,9 @@ function midi_event(data)
     end
     if msg.val then temp_msg[5] = msg.val else temp_msg[5] = "" end
     table.insert (midi_buffer, 1, temp_msg)
-    
+    midi_buffer_display = copy(midi_buffer)
+  
+  
     if not mute then
       play(msg) -- play notes with default engine
     end
@@ -290,21 +389,30 @@ function draw_labels()
 end
 
 function draw_event()
-  for i=1,6 do
+   for i=1,6 do
     --print("i:",i)
     buf_idx = buff_start + i - 1
-    if midi_buffer[buf_idx][1] ~= nil then
+    if (midi_buffer[buf_idx][1] ~= nil) then
+      --truncate the type column if: (1) length > 8 and (2) it is not the first line of scrolling text
+      type_text = ""
+      if (i==1) then
+        type_text = truncate(midi_buffer_display[buf_idx][4],scr_max_length_col4,false)
+      else 
+        type_text = truncate(midi_buffer[buf_idx][4],scr_max_length_col4,true)
+      end
+      
       screen.level(12)
       screen.move(col1+1,(line_offset + line_height * i))
-      screen.text(midi_buffer[buf_idx][1])
+      screen.text(midi_buffer_display[buf_idx][1])
       screen.move(col2+1,(line_offset + line_height * i))
-      screen.text(midi_buffer[buf_idx][2])
+      screen.text(midi_buffer_display[buf_idx][2])
       screen.move(col3+2,(line_offset + line_height * i))
-      screen.text(midi_buffer[buf_idx][3])
+      screen.text(midi_buffer_display[buf_idx][3])
       screen.move(col4,(line_offset + line_height * i))
-      screen.text(midi_buffer[buf_idx][4])
+      -- screen.text(midi_buffer_display[buf_idx][4])
+      screen.text(type_text)
       screen.move(col5,(line_offset + line_height * i))
-      screen.text(midi_buffer[buf_idx][5])
+      screen.text(midi_buffer_display[buf_idx][5])
       screen.stroke()
       screen.level(3)
       screen.move(col6,(line_offset + line_height * i))
@@ -354,7 +462,9 @@ function redraw()
 
   screen.level(15)
   screen.move(0, 7)
-  screen.text(devicepos .. ": ".. mdevs[devicepos])
+  device_name = truncate(device_name_display,scr_max_length_device_name,false)
+  screen.text(device_name_display)
+  -- screen.text(devicepos .. ": ".. mdevs[devicepos])
 
   screen.update()
 end
